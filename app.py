@@ -1,161 +1,131 @@
-"""Multimodal Semantic GIF & Meme Finder (Gradio + gemini-embedding-2)."""
+"""Semantic GIF & Meme Finder: FastAPI backend + plain HTML frontend."""
 import io
-import json
+import logging
 import os
+import threading
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
-import gradio as gr
-import numpy as np
-from google import genai
-from google.genai import errors, types
+import uvicorn
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from pydantic import BaseModel, Field
 
-MODEL = "gemini-embedding-2"
-DIMENSIONS = 768
-TOP_K = 6
+import finder
+
+logging.basicConfig(level=logging.INFO)
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "embeddings_db.json"
 
-# ---------------------------------------------------------------- load index
-if not DB_PATH.exists():
-    raise SystemExit("embeddings_db.json not found. Run `python index_gifs.py` first.")
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+RATE_LIMIT = int(os.environ.get("RATE_LIMIT_PER_MIN", 12))    # per IP, shared key only
+MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT_SEARCHES", 2))
 
-_db = json.loads(DB_PATH.read_text(encoding="utf-8"))
-GIF_PATHS = list(_db["gifs"].keys())
-GIF_MATRIX = np.asarray([_db["gifs"][p] for p in GIF_PATHS], dtype=np.float32)
-CACHED = {k.strip().lower(): np.asarray(v, dtype=np.float32)
-          for k, v in _db.get("cached_queries", {}).items()}
-EXAMPLE_QUERIES = list(_db.get("cached_queries", {}).keys())
+app = FastAPI(title="Semantic GIF & Meme Finder", docs_url="/docs", redoc_url=None)
+app.mount("/media", StaticFiles(directory=str(finder.CACHE_DIR)), name="media")
 
-if len(GIF_PATHS) == 0:
-    raise SystemExit("The index is empty. Add GIFs to ./gifs/ and re-run index_gifs.py.")
+_slots = threading.BoundedSemaphore(MAX_CONCURRENT)
+_hits: dict[str, deque] = defaultdict(deque)
+_hits_lock = threading.Lock()
 
 
 # ------------------------------------------------------------------- helpers
-def get_client(user_key: str | None) -> genai.Client:
-    key = (user_key or "").strip() or os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise gr.Error("No Gemini API key available. Paste one under "
-                       "'Use your own API key'.")
-    return genai.Client(api_key=key)
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return fwd or (request.client.host if request.client else "unknown")
 
 
-def embed_query(client: genai.Client, content) -> np.ndarray:
+def _check_rate_limit(request: Request, user_key: str | None) -> None:
+    """Protect the shared key. Visitors using their own key are not limited."""
+    if (user_key or "").strip():
+        return
+    ip, now = _client_ip(request), time.time()
+    with _hits_lock:
+        window = _hits[ip]
+        while window and now - window[0] > 60:
+            window.popleft()
+        if len(window) >= RATE_LIMIT:
+            raise HTTPException(429, "Too many searches from your IP. Wait a minute "
+                                     "or paste your own Gemini API key.")
+        window.append(now)
+        if len(_hits) > 5000:  # keep the dict small
+            for stale in [k for k, v in _hits.items() if not v]:
+                del _hits[stale]
+
+
+def _run(fn, *args):
+    """Run a search with a concurrency cap and map errors to HTTP responses."""
+    if not _slots.acquire(timeout=20):
+        raise HTTPException(503, "Server is busy with other searches. Try again shortly.")
     try:
-        resp = client.models.embed_content(
-            model=MODEL,
-            contents=content,
-            config=types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=DIMENSIONS,
-            ),
-        )
-    except errors.APIError as exc:
-        if exc.code == 429:
-            raise gr.Error("Shared Gemini quota is busy (HTTP 429). Wait a few "
-                           "seconds, try a cached example, or paste your own API key.")
-        raise gr.Error(f"Gemini API error ({exc.code}): {exc.message}")
-    vec = np.asarray(resp.embeddings[0].values, dtype=np.float32)
-    norm = np.linalg.norm(vec)
-    return vec / norm if norm else vec
+        matches, status = fn(*args)
+        results = finder.build_gallery(matches)
+    except finder.FinderError as exc:
+        raise HTTPException(exc.status, str(exc))
+    except finder.RateLimited:
+        raise HTTPException(429, "Gemini quota is busy (HTTP 429). Wait a few "
+                                 "seconds, try a preset, or paste your own API key.")
+    except finder.EmbedFailed:
+        raise HTTPException(502, "Gemini could not embed that input. Try something else.")
+    finally:
+        _slots.release()
+    if not results:
+        raise HTTPException(502, "Found matches but none of the image links could be "
+                                 "loaded (expired or hotlink-blocked). Try again.")
+    return {"status": status, "results": results}
 
 
-def top_matches(qvec: np.ndarray) -> list[tuple[str, str]]:
-    sims = GIF_MATRIX @ qvec  # both sides are unit vectors -> cosine similarity
-    order = np.argsort(-sims)[:TOP_K]
-    return [
-        (str(BASE_DIR / GIF_PATHS[i]),
-         f"Match: {max(float(sims[i]), 0.0) * 100:.1f}%  ·  {Path(GIF_PATHS[i]).name}")
-        for i in order
-    ]
+# ----------------------------------------------------------------------- API
+class TextQuery(BaseModel):
+    query: str = Field(min_length=1, max_length=200)
 
 
-# ------------------------------------------------------------------- actions
-def search_text(query: str, user_key: str):
-    query = (query or "").strip()
-    if not query:
-        raise gr.Error("Type something to search for.")
-    cached = CACHED.get(query.lower())
-    if cached is not None:
-        return top_matches(cached), "⚡ Served from cache (no API call)."
-    qvec = embed_query(get_client(user_key), query)
-    return top_matches(qvec), "🔍 Embedded live with gemini-embedding-2."
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
 
 
-def search_image(image: Image.Image | None, user_key: str):
-    if image is None:
-        raise gr.Error("Upload a screenshot or meme image first.")
-    image = image.convert("RGB")
-    image.thumbnail((1024, 1024))
-    buf = io.BytesIO()
-    image.save(buf, format="PNG")
-    part = types.Part.from_bytes(data=buf.getvalue(), mime_type="image/png")
-    qvec = embed_query(get_client(user_key), part)
-    return top_matches(qvec), "🖼️ Image embedded live with gemini-embedding-2."
+@app.get("/api/presets")
+def presets():
+    return {"queries": finder.PRESET_QUERIES}
 
 
-# ------------------------------------------------------------------------ UI
-CSS = """
-.gradio-container {max-width: 1100px !important; margin: auto;}
-#chips {flex-wrap: wrap; gap: 8px;}
-#chips button {flex: 0 1 auto; min-width: 0;}
-@media (max-width: 640px) {
-  #chips button {flex: 1 1 100%;}
-}
-"""
+@app.post("/api/search/text")
+def search_text(body: TextQuery, request: Request,
+                x_gemini_key: str | None = Header(default=None)):
+    """Text / Hinglish search. Optional header `X-Gemini-Key` overrides the env key."""
+    _check_rate_limit(request, x_gemini_key)
+    return _run(finder.text_search, body.query, x_gemini_key)
 
-with gr.Blocks(theme=gr.themes.Soft(), css=CSS, title="Semantic GIF Finder") as demo:
-    gr.Markdown(
-        "# 🎞️ Semantic GIF & Meme Finder\n"
-        "Search by *meaning*, not filename. Powered by Google's "
-        "`gemini-embedding-2` multimodal embeddings — it understands the visuals, "
-        "on-screen text, and Hinglish. Every file is named generically "
-        "(`meme_01.gif`), so matches come purely from the content."
-    )
 
-    with gr.Accordion("🔑 Use your own API key (optional)", open=False):
-        gr.Markdown("If the shared free quota is busy, paste your own key from "
-                    "[Google AI Studio](https://aistudio.google.com/apikey). "
-                    "It is used only for your requests and never stored.")
-        api_key_box = gr.Textbox(label="Gemini API key", type="password",
-                                 placeholder="AIza...")
+@app.post("/api/search/image")
+def search_image(request: Request, file: UploadFile = File(...),
+                 hint: str = Form(default="", max_length=100),
+                 x_gemini_key: str | None = Header(default=None)):
+    """Reverse image search (multipart upload, 8 MB max)."""
+    _check_rate_limit(request, x_gemini_key)
+    data = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Image is larger than 8 MB.")
+    try:
+        image = Image.open(io.BytesIO(data))
+        if image.width * image.height > finder.MAX_PIXELS:
+            raise ValueError("too large")
+        image.load()
+    except Exception:
+        raise HTTPException(400, "That file is not a readable image.")
+    finally:
+        del data
+    return _run(finder.image_search, image, hint, x_gemini_key)
 
-    with gr.Tabs():
-        with gr.Tab("💬 Text / Hinglish Search"):
-            with gr.Row():
-                query_box = gr.Textbox(label="Describe the GIF", scale=4,
-                                       placeholder="e.g. awkward silence")
-                search_btn = gr.Button("Search", variant="primary", scale=1)
-            with gr.Row(elem_id="chips"):
-                chips = [gr.Button(q, size="sm") for q in EXAMPLE_QUERIES]
-            text_status = gr.Markdown()
-            text_gallery = gr.Gallery(label="Top matches", columns=3, rows=2,
-                                      height="auto", object_fit="contain",
-                                      show_label=False)
 
-            search_btn.click(search_text, [query_box, api_key_box],
-                             [text_gallery, text_status])
-            query_box.submit(search_text, [query_box, api_key_box],
-                             [text_gallery, text_status])
-            for chip, q in zip(chips, EXAMPLE_QUERIES):
-                chip.click(lambda q=q: q, None, query_box).then(
-                    search_text, [query_box, api_key_box],
-                    [text_gallery, text_status])
+# ------------------------------------------------------------------ frontend
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(BASE_DIR / "static" / "index.html")
 
-        with gr.Tab("🖼️ Reverse Image → GIF"):
-            image_in = gr.Image(type="pil", label="Upload a screenshot or meme",
-                                sources=["upload", "clipboard"])
-            image_btn = gr.Button("Find similar GIFs", variant="primary")
-            image_status = gr.Markdown()
-            image_gallery = gr.Gallery(label="Top matches", columns=3, rows=2,
-                                       height="auto", object_fit="contain",
-                                       show_label=False)
-            image_btn.click(search_image, [image_in, api_key_box],
-                            [image_gallery, image_status])
 
 if __name__ == "__main__":
-    demo.queue(max_size=20).launch(
-        allowed_paths=[str(BASE_DIR / "gifs")],
-        server_name="0.0.0.0",
-        server_port=int(os.environ.get("PORT", 7860)),
-    )
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
