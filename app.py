@@ -84,12 +84,15 @@ class TextQuery(BaseModel):
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    """Also reports how many preset queries were loaded (should be 5 in production)."""
+    return {"ok": True, "presets_loaded": len(finder.PRESETS),
+            "presets_expected": len(finder.PRESET_QUERIES)}
 
 
 @app.get("/api/presets")
 def presets():
-    return {"queries": finder.PRESET_QUERIES}
+    return {"queries": finder.PRESET_QUERIES,
+            "cached": [q for q in finder.PRESET_QUERIES if q.lower() in finder.PRESETS]}
 
 
 @app.post("/api/search/text")

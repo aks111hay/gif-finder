@@ -3,192 +3,383 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>GIF &amp; Meme Finder</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%9E%3C/text%3E%3C/svg%3E">
 <style>
   :root {
-    --bg: #ffffff; --fg: #1a1a1a; --muted: #666666; --line: #d9d9d9;
-    --panel: #f6f6f6; --accent: #1d4ed8; --accent-fg: #ffffff; --error: #b42318;
+    --bg: #f5f6f8; --surface: #ffffff; --fg: #14161a; --muted: #5f6672;
+    --line: #e2e5ea; --soft: #eef0f4; --accent: #4f46e5; --accent-fg: #ffffff;
+    --accent-soft: #e9e8fd; --error-bg: #fdecea; --error: #b42318; --ok: #12805c;
+    --radius: 12px;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #151515; --fg: #ececec; --muted: #a0a0a0; --line: #333333;
-      --panel: #1e1e1e; --accent: #5b8def; --accent-fg: #101010; --error: #f97066;
-    }
+  :root[data-theme="dark"] {
+    --bg: #0f1114; --surface: #181b20; --fg: #eceef2; --muted: #9aa1ad;
+    --line: #2a2f37; --soft: #21252c; --accent: #818cf8; --accent-fg: #0f1114;
+    --accent-soft: #272a4a; --error-bg: #3a1c1a; --error: #f97066; --ok: #4ade80;
   }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
-    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    font: 16px/1.5 Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   }
-  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 1.5rem; margin: 0 0 4px; }
-  .sub { color: var(--muted); margin: 0 0 20px; }
-  details { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-bottom: 20px; }
-  summary { cursor: pointer; }
-  details p { color: var(--muted); font-size: .9rem; margin: 8px 0; }
-  input[type=text], input[type=password] {
-    width: 100%; padding: 10px; font: inherit; color: var(--fg);
-    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-  }
-  button {
-    font: inherit; padding: 10px 16px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--line); background: var(--panel); color: var(--fg);
-  }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
-  button:disabled { opacity: .55; cursor: not-allowed; }
-  .tabs { display: flex; gap: 8px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
-  .tab { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; }
-  .tab[aria-selected=true] { border-bottom-color: var(--accent); font-weight: 600; }
-  .row { display: flex; gap: 8px; }
-  .row input { flex: 1; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-  .chip { padding: 6px 12px; font-size: .9rem; border-radius: 999px; }
-  .field { margin-bottom: 12px; }
-  label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: 4px; }
-  #preview { max-width: 200px; max-height: 200px; margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; }
-  #status { margin: 16px 0; color: var(--muted); font-size: .95rem; }
-  #status.error { color: var(--error); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-  figure { margin: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
-  figure img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--bg); }
-  figcaption { padding: 10px 12px; font-size: .9rem; }
-  .score { font-weight: 600; }
-  .meta { color: var(--muted); word-break: break-all; }
-  a { color: var(--accent); }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   [hidden] { display: none !important; }
-  @media (max-width: 480px) {
-    .row { flex-direction: column; }
+  a { color: var(--accent); }
+
+  /* header */
+  .topbar { background: var(--surface); border-bottom: 1px solid var(--line); }
+  .topbar-inner { max-width: 1040px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.01em; }
+  .logo { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; font-size: 18px; }
+  .icon-btn { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; }
+  .icon-btn:hover { background: var(--soft); }
+
+  main { max-width: 1040px; margin: 0 auto; padding: 36px 20px 64px; }
+  .hero { text-align: center; margin-bottom: 28px; }
+  .hero h1 { font-size: clamp(1.75rem, 4.5vw, 2.6rem); line-height: 1.15; letter-spacing: -.02em; margin: 0 0 10px; }
+  .hero p { margin: 0 auto; max-width: 560px; color: var(--muted); font-size: 1.05rem; }
+
+  /* search card */
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px; max-width: 760px; margin: 0 auto; }
+  .seg { display: inline-flex; background: var(--soft); border-radius: 10px; padding: 4px; margin-bottom: 16px; }
+  .seg button { border: 0; background: none; padding: 8px 16px; border-radius: 8px; color: var(--muted); font-weight: 600; }
+  .seg button[aria-selected="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
+
+  .searchrow { display: flex; gap: 10px; }
+  .field { position: relative; flex: 1; }
+  .field svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+  .field input { width: 100%; height: 50px; padding: 0 14px 0 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); }
+  input[type=text], input[type=password] { border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 11px 12px; width: 100%; }
+  .btn { height: 50px; padding: 0 22px; border-radius: 12px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  .btn:hover { filter: brightness(.94); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn.small { height: 36px; padding: 0 12px; border-radius: 8px; font-size: .88rem; }
+  .btn.ghost { background: var(--surface); color: var(--fg); border-color: var(--line); }
+
+  .chiprow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; }
+  .chiprow .label { color: var(--muted); font-size: .88rem; margin-right: 2px; }
+  .chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 12px; font-size: .88rem; }
+  .chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .chip:disabled { opacity: .55; cursor: not-allowed; }
+
+  /* image tab */
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 28px 16px; text-align: center; color: var(--muted); background: var(--bg); cursor: pointer; }
+  .drop.over, .drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .drop strong { color: var(--fg); }
+  .previewbox { display: flex; align-items: center; gap: 14px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: var(--bg); }
+  .previewbox img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; }
+  .previewbox .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stack { display: grid; gap: 12px; }
+  label.lbl { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 4px; }
+
+  details.key { max-width: 760px; margin: 12px auto 0; color: var(--muted); font-size: .92rem; }
+  details.key summary { cursor: pointer; padding: 6px 4px; }
+  details.key .inner { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 6px; }
+  details.key .inner p { margin: 0 0 10px; }
+  .keyrow { display: flex; gap: 8px; }
+
+  /* results */
+  .results { margin-top: 36px; }
+  .results-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+  .results-head h2 { margin: 0; font-size: 1.2rem; }
+  .note { color: var(--muted); font-size: .9rem; }
+  .alert { background: var(--error-bg); color: var(--error); border-radius: 12px; padding: 12px 14px; max-width: 760px; margin: 18px auto 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 18px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; }
+  .thumb { position: relative; background: var(--soft); border: 0; padding: 0; aspect-ratio: 4 / 3; width: 100%; display: block; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .rank { position: absolute; top: 10px; left: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; font-size: .78rem; font-weight: 700; padding: 2px 9px; }
+  .tile-body { padding: 12px 14px 14px; display: grid; gap: 8px; }
+  .scoreline { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; }
+  .scoreline span:last-child { color: var(--muted); font-weight: 500; font-size: .82rem; }
+  .bar { height: 6px; border-radius: 999px; background: var(--soft); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+  .fname { color: var(--muted); font-size: .86rem; word-break: break-all; }
+  .actions { display: flex; gap: 8px; margin-top: 2px; }
+  .actions a, .actions button { flex: 1; text-align: center; text-decoration: none; }
+  .actions a.btn { display: grid; place-items: center; }
+
+  .skeleton { height: 290px; border-radius: var(--radius); background: var(--soft); border: 1px solid var(--line); animation: pulse 1.3s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .empty { text-align: center; color: var(--muted); padding: 40px 12px; }
+  .empty .big { font-size: 2.4rem; }
+
+  dialog#lightbox { border: 0; padding: 0; background: transparent; max-width: 94vw; max-height: 94vh; }
+  dialog#lightbox::backdrop { background: rgba(0,0,0,.75); }
+  dialog#lightbox img { max-width: 94vw; max-height: 90vh; border-radius: 10px; background: var(--surface); display: block; }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: .92rem; z-index: 20; }
+  footer { text-align: center; color: var(--muted); font-size: .85rem; padding: 0 20px 32px; }
+
+  @media (max-width: 560px) {
+    main { padding-top: 24px; }
+    .card { padding: 14px; }
+    .searchrow { flex-direction: column; }
+    .btn { width: 100%; }
     .grid { grid-template-columns: 1fr; }
   }
+  @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 </style>
 </head>
 <body>
-<main>
-  <h1>GIF &amp; Meme Finder</h1>
-  <p class="sub">Describe a GIF in English or Hinglish, or upload a screenshot. Results are found on the web and ranked by meaning with Gemini embeddings.</p>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><div class="logo" aria-hidden="true">&#127902;</div> GIF &amp; Meme Finder</div>
+    <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+  </div>
+</header>
 
-  <details>
-    <summary>Use your own Gemini API key (optional)</summary>
-    <p>If the shared free quota is busy, paste your own key from
-      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
-      It is sent only with your searches and is not stored.</p>
-    <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off">
+<main>
+  <section class="hero">
+    <h1>Find the right GIF by what it means</h1>
+    <p>Describe a reaction in English or Hinglish, or drop in a screenshot. Candidates come from the web and are ranked by meaning with Gemini embeddings.</p>
+  </section>
+
+  <section class="card">
+    <div class="seg" role="tablist" aria-label="Search type">
+      <button type="button" role="tab" id="tabTextBtn" aria-selected="true">Text search</button>
+      <button type="button" role="tab" id="tabImageBtn" aria-selected="false">Image search</button>
+    </div>
+
+    <div id="paneText">
+      <form id="textForm" class="searchrow">
+        <div class="field">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input type="text" id="query" placeholder="Try &ldquo;awkward silence&rdquo;" maxlength="200" required aria-label="Describe the GIF">
+        </div>
+        <button class="btn" type="submit" id="textBtn">Search</button>
+      </form>
+      <div class="chiprow" id="chipRow" hidden><span class="label">Try:</span></div>
+    </div>
+
+    <div id="paneImage" hidden>
+      <form id="imageForm" class="stack">
+        <div>
+          <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose or drop an image">
+            <div style="font-size:1.8rem" aria-hidden="true">&#128444;</div>
+            <div><strong>Click to upload</strong>, drag and drop, or paste a screenshot</div>
+            <div class="note">PNG, JPG, WEBP or GIF, up to 8 MB</div>
+          </div>
+          <input type="file" id="file" accept="image/*" hidden>
+          <div class="previewbox" id="previewBox" hidden>
+            <img id="preview" alt="Selected image">
+            <div class="name" id="fileName"></div>
+            <button class="btn small ghost" type="button" id="clearFile">Remove</button>
+          </div>
+        </div>
+        <div>
+          <label class="lbl" for="hint">Optional hint: what is it about?</label>
+          <input type="text" id="hint" maxlength="100" placeholder="Leave empty and Gemini will guess a search phrase">
+        </div>
+        <button class="btn" type="submit" id="imageBtn">Find similar GIFs</button>
+      </form>
+    </div>
+  </section>
+
+  <details class="key">
+    <summary>Shared quota busy? Use your own Gemini API key</summary>
+    <div class="inner">
+      <p>Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>. It is sent only with your searches and is not stored.</p>
+      <div class="keyrow">
+        <input type="password" id="apiKey" placeholder="AIza..." autocomplete="off" aria-label="Gemini API key">
+        <button class="btn small ghost" type="button" id="showKey">Show</button>
+      </div>
+    </div>
   </details>
 
-  <div class="tabs" role="tablist">
-    <button class="tab" role="tab" id="tabTextBtn" aria-selected="true">Text search</button>
-    <button class="tab" role="tab" id="tabImageBtn" aria-selected="false">Image search</button>
-  </div>
+  <div class="alert" id="errorBox" role="alert" hidden></div>
 
-  <section id="tabText">
-    <form id="textForm" class="row">
-      <input type="text" id="query" placeholder="e.g. awkward silence" maxlength="200" required>
-      <button type="submit" class="primary" id="textBtn">Search</button>
-    </form>
-    <div class="chips" id="chips"></div>
-  </section>
-
-  <section id="tabImage" hidden>
-    <form id="imageForm">
-      <div class="field">
-        <label for="file">Screenshot or meme image</label>
-        <input type="file" id="file" accept="image/*" required>
-        <img id="preview" alt="Selected image preview" hidden>
+  <section class="results" id="results" aria-live="polite">
+    <div class="empty" id="empty">
+      <div class="big" aria-hidden="true">&#127916;</div>
+      <p>Your matches will show up here.</p>
+    </div>
+    <div id="loadingBox" hidden>
+      <p class="note" id="loadingText"></p>
+      <div class="grid" id="skeletons"></div>
+    </div>
+    <div id="resultBox" hidden>
+      <div class="results-head">
+        <h2 id="resultTitle">Top matches</h2>
+        <span class="note" id="resultNote"></span>
       </div>
-      <div class="field">
-        <label for="hint">Optional hint (what is it about?)</label>
-        <input type="text" id="hint" maxlength="100" placeholder="Leave empty and Gemini will guess a search phrase">
-      </div>
-      <button type="submit" class="primary" id="imageBtn">Find similar GIFs</button>
-    </form>
+      <div class="grid" id="grid"></div>
+    </div>
   </section>
-
-  <div id="status" role="status" aria-live="polite"></div>
-  <div class="grid" id="grid"></div>
 </main>
+
+<footer>Results are third-party images found on the web. Open the source link to see where each one comes from.</footer>
+
+<dialog id="lightbox"><img id="lightboxImg" alt=""></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
 
 <script>
 (function () {
+  "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var statusEl = $("status"), grid = $("grid");
 
-  function setStatus(msg, isError) {
-    statusEl.textContent = msg || "";
-    statusEl.className = isError ? "error" : "";
+  function el(tag, props, kids) {
+    var n = document.createElement(tag);
+    Object.keys(props || {}).forEach(function (k) {
+      if (k === "text") n.textContent = props[k];
+      else if (k === "class") n.className = props[k];
+      else n.setAttribute(k, props[k]);
+    });
+    (kids || []).forEach(function (c) { n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function safeHref(u) { return /^https?:\/\//i.test(u || "") ? u : null; }
+
+  /* ---------- theme ---------- */
+  var root = document.documentElement;
+  function applyTheme(t) { root.setAttribute("data-theme", t); }
+  var saved = null;
+  try { saved = localStorage.getItem("theme"); } catch (e) {}
+  applyTheme(saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  $("themeBtn").addEventListener("click", function () {
+    var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("theme", next); } catch (e) {}
+  });
+
+  /* ---------- toast ---------- */
+  var toastTimer;
+  function toast(msg) {
+    var t = $("toast"); t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 1800);
   }
 
-  function setBusy(busy) {
-    ["textBtn", "imageBtn"].forEach(function (id) { $(id).disabled = busy; });
-    document.querySelectorAll(".chip").forEach(function (b) { b.disabled = busy; });
+  /* ---------- tabs ---------- */
+  var currentTab = "text";
+  function showTab(name) {
+    currentTab = name;
+    var isText = name === "text";
+    $("paneText").hidden = !isText;
+    $("paneImage").hidden = isText;
+    $("tabTextBtn").setAttribute("aria-selected", String(isText));
+    $("tabImageBtn").setAttribute("aria-selected", String(!isText));
   }
+  $("tabTextBtn").addEventListener("click", function () { showTab("text"); });
+  $("tabImageBtn").addEventListener("click", function () { showTab("image"); });
 
+  /* ---------- api key ---------- */
+  $("showKey").addEventListener("click", function () {
+    var i = $("apiKey"), show = i.type === "password";
+    i.type = show ? "text" : "password";
+    this.textContent = show ? "Hide" : "Show";
+  });
   function headers(extra) {
-    var h = extra || {};
-    var key = $("apiKey").value.trim();
+    var h = extra || {}, key = $("apiKey").value.trim();
     if (key) h["X-Gemini-Key"] = key;
     return h;
   }
 
-  function safeHref(url) {
-    return /^https?:\/\//i.test(url) ? url : null;
+  /* ---------- view states ---------- */
+  var timerId = null;
+  function setBusy(b) {
+    ["textBtn", "imageBtn"].forEach(function (id) { $(id).disabled = b; });
+    document.querySelectorAll(".chip").forEach(function (c) { c.disabled = b; });
+  }
+  function showError(msg) { var e = $("errorBox"); e.textContent = msg || ""; e.hidden = !msg; }
+  function showLoading(on) {
+    $("loadingBox").hidden = !on;
+    if (on) {
+      $("empty").hidden = true; $("resultBox").hidden = true; showError("");
+      var s = $("skeletons"); s.textContent = "";
+      for (var i = 0; i < 6; i++) s.appendChild(el("div", { "class": "skeleton" }));
+      var t0 = Date.now();
+      var tick = function () {
+        $("loadingText").textContent = "Searching and ranking\u2026 " +
+          Math.floor((Date.now() - t0) / 1000) + "s (new queries can take up to 30 seconds)";
+      };
+      tick(); timerId = setInterval(tick, 1000);
+    } else { clearInterval(timerId); }
+  }
+
+  /* ---------- results ---------- */
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function () { toast("Link copied"); },
+        function () { toast("Could not copy"); });
+    }
+    var ta = el("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("Link copied"); } catch (e) { toast("Could not copy"); }
+    ta.remove();
   }
 
   function render(data) {
-    grid.textContent = "";
-    data.results.forEach(function (r) {
-      var fig = document.createElement("figure");
-      var img = document.createElement("img");
-      img.src = r.src; img.alt = r.filename; img.loading = "lazy";
-      var cap = document.createElement("figcaption");
+    var grid = $("grid"); grid.textContent = "";
+    data.results.forEach(function (r, i) {
+      var thumb = el("button", { "class": "thumb", type: "button", "aria-label": "View larger: " + r.filename }, [
+        el("img", { src: r.src, alt: r.filename, loading: "lazy" }),
+        el("span", { "class": "rank", text: "#" + (i + 1) })
+      ]);
+      thumb.addEventListener("click", function () {
+        $("lightboxImg").src = r.src; $("lightboxImg").alt = r.filename; $("lightbox").showModal();
+      });
 
-      var score = document.createElement("div");
-      score.className = "score";
-      score.textContent = "Match: " + r.score.toFixed(1) + "%";
+      var bar = el("div", { "class": "bar" }, [el("i")]);
+      bar.firstChild.style.width = Math.max(2, Math.min(100, r.score)) + "%";
 
-      var meta = document.createElement("div");
-      meta.className = "meta";
-      meta.textContent = r.filename + " \u00b7 ";
+      var actions = el("div", { "class": "actions" });
       var href = safeHref(r.source);
       if (href) {
-        var a = document.createElement("a");
-        a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
-        a.textContent = r.domain;
-        meta.appendChild(a);
-      } else {
-        meta.appendChild(document.createTextNode(r.domain));
+        actions.appendChild(el("a", { "class": "btn small ghost", href: href, target: "_blank",
+                                      rel: "noopener noreferrer", text: "Open source" }));
+        var copy = el("button", { "class": "btn small ghost", type: "button", text: "Copy link" });
+        copy.addEventListener("click", function () { copyText(href); });
+        actions.appendChild(copy);
       }
-      cap.appendChild(score); cap.appendChild(meta);
-      fig.appendChild(img); fig.appendChild(cap);
-      grid.appendChild(fig);
+
+      grid.appendChild(el("article", { "class": "tile" }, [
+        thumb,
+        el("div", { "class": "tile-body" }, [
+          el("div", { "class": "scoreline" }, [
+            el("span", { text: r.score.toFixed(1) + "% match" }),
+            el("span", { text: r.domain })
+          ]),
+          bar,
+          el("div", { "class": "fname", text: r.filename }),
+          actions
+        ])
+      ]));
     });
-    setStatus(data.status, false);
+    $("resultNote").textContent = data.status || "";
+    $("resultBox").hidden = false;
+    $("resultBox").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   async function send(url, options) {
-    setBusy(true);
-    grid.textContent = "";
-    setStatus("Searching\u2026 new queries can take up to 30 seconds.", false);
+    setBusy(true); showLoading(true);
     var ctrl = new AbortController();
-    var timer = setTimeout(function () { ctrl.abort(); }, 90000);
+    var timeout = setTimeout(function () { ctrl.abort(); }, 90000);
     try {
       options.signal = ctrl.signal;
       var res = await fetch(url, options);
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) {
-        var msg = typeof data.detail === "string" ? data.detail : "Request failed (" + res.status + ").";
-        throw new Error(msg);
+        throw new Error(typeof data.detail === "string" ? data.detail : "Request failed (" + res.status + ").");
       }
-      render(data);
+      showLoading(false); render(data);
     } catch (err) {
-      setStatus(err.name === "AbortError" ? "The search timed out. Please try again." : err.message, true);
+      showLoading(false);
+      $("empty").hidden = false;
+      showError(err.name === "AbortError" ? "The search timed out. Please try again." : err.message);
     } finally {
-      clearTimeout(timer);
-      setBusy(false);
+      clearTimeout(timeout); setBusy(false);
     }
   }
 
+  /* ---------- text search ---------- */
   function searchText(q) {
-    q = q.trim();
+    q = (q || "").trim();
     if (!q) return;
     send("/api/search/text", {
       method: "POST",
@@ -196,46 +387,64 @@
       body: JSON.stringify({ query: q })
     });
   }
+  $("textForm").addEventListener("submit", function (e) { e.preventDefault(); searchText($("query").value); });
 
-  $("textForm").addEventListener("submit", function (e) {
-    e.preventDefault();
-    searchText($("query").value);
+  fetch("/api/presets").then(function (r) { return r.json(); }).then(function (d) {
+    var cached = d.cached || [];
+    d.queries.forEach(function (q) {
+      var label = cached.indexOf(q.toLowerCase()) >= 0 ? "\u26A1 " + q : q;
+      var b = el("button", { "class": "chip", type: "button", text: label });
+      b.addEventListener("click", function () { $("query").value = q; searchText(q); });
+      $("chipRow").appendChild(b);
+    });
+    $("chipRow").hidden = false;
+  }).catch(function () {});
+
+  /* ---------- image search ---------- */
+  var chosen = null, previewUrl = null;
+  function setFile(f) {
+    if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+    if (f && !/^image\//.test(f.type)) { showError("Please choose an image file."); return; }
+    chosen = f || null;
+    $("drop").hidden = !!chosen;
+    $("previewBox").hidden = !chosen;
+    if (chosen) {
+      previewUrl = URL.createObjectURL(chosen);
+      $("preview").src = previewUrl; $("fileName").textContent = chosen.name || "Pasted image";
+      showError("");
+    }
+  }
+  $("drop").addEventListener("click", function () { $("file").click(); });
+  $("drop").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); }
   });
-
+  $("file").addEventListener("change", function () { setFile(this.files[0]); this.value = ""; });
+  $("clearFile").addEventListener("click", function () { setFile(null); });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    $("drop").addEventListener(ev, function (e) { e.preventDefault(); $("drop").classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    $("drop").addEventListener(ev, function (e) { e.preventDefault(); $("drop").classList.remove("over"); });
+  });
+  $("drop").addEventListener("drop", function (e) { setFile(e.dataTransfer.files[0]); });
+  document.addEventListener("paste", function (e) {
+    if (currentTab !== "image" || !e.clipboardData) return;
+    for (var i = 0; i < e.clipboardData.items.length; i++) {
+      var it = e.clipboardData.items[i];
+      if (it.type.indexOf("image/") === 0) { setFile(it.getAsFile()); break; }
+    }
+  });
   $("imageForm").addEventListener("submit", function (e) {
     e.preventDefault();
-    var file = $("file").files[0];
-    if (!file) { setStatus("Choose an image first.", true); return; }
+    if (!chosen) { showError("Choose or paste an image first."); return; }
     var fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", chosen);
     fd.append("hint", $("hint").value.trim());
     send("/api/search/image", { method: "POST", headers: headers(), body: fd });
   });
 
-  $("file").addEventListener("change", function () {
-    var f = this.files[0], p = $("preview");
-    if (f) { p.src = URL.createObjectURL(f); p.hidden = false; } else { p.hidden = true; }
-  });
-
-  function showTab(name) {
-    var isText = name === "text";
-    $("tabText").hidden = !isText;
-    $("tabImage").hidden = isText;
-    $("tabTextBtn").setAttribute("aria-selected", String(isText));
-    $("tabImageBtn").setAttribute("aria-selected", String(!isText));
-    grid.textContent = ""; setStatus("");
-  }
-  $("tabTextBtn").addEventListener("click", function () { showTab("text"); });
-  $("tabImageBtn").addEventListener("click", function () { showTab("image"); });
-
-  fetch("/api/presets").then(function (r) { return r.json(); }).then(function (d) {
-    d.queries.forEach(function (q) {
-      var b = document.createElement("button");
-      b.type = "button"; b.className = "chip"; b.textContent = q;
-      b.addEventListener("click", function () { $("query").value = q; searchText(q); });
-      $("chips").appendChild(b);
-    });
-  }).catch(function () {});
+  /* ---------- lightbox ---------- */
+  $("lightbox").addEventListener("click", function () { this.close(); });
 })();
 </script>
 </body>

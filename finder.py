@@ -17,7 +17,9 @@ import io
 import ipaddress
 import json
 import logging
+import re
 import os
+import shutil
 import socket
 import tempfile
 import time
@@ -49,6 +51,10 @@ SEARCH_BUDGET = float(os.environ.get("SEARCH_BUDGET_SEC", 50))   # max seconds p
 WORKERS = int(os.environ.get("WORKERS", 3))                      # parallel candidates
 REQUEST_DELAY = float(os.environ.get("REQUEST_DELAY", 0.3))      # pause after each API call
 CAPTION_MODEL = os.environ.get("CAPTION_MODEL", "gemini-2.5-flash")
+DDG_REGION = os.environ.get("DDG_REGION", "in-en")              # DuckDuckGo region
+CANDIDATE_POOL = 3                                               # fetch n*3, keep best n
+# Best score below this = probably off-topic candidates: warn and never cache.
+MIN_CONFIDENCE = float(os.environ.get("MIN_CONFIDENCE", 0.30))
 
 CONNECT_TIMEOUT, READ_TIMEOUT, TOTAL_DOWNLOAD_TIMEOUT = 4, 8, 15
 MAX_PIXELS = 20_000_000          # reject decompression bombs
@@ -104,6 +110,10 @@ def _load_presets() -> dict:
 
 
 PRESETS = _load_presets()
+if PRESETS:
+    log.info("Loaded %d preset queries from %s", len(PRESETS), PRESET_PATH)
+else:
+    log.warning("No presets loaded: %s is missing or empty. Preset chips will run live searches. Run warm_cache.py locally and commit cache/.", PRESET_PATH)
 
 
 # ------------------------------------------------------------------- helpers
@@ -259,26 +269,69 @@ def prune_disk_cache() -> None:
 
 
 # ----------------------------------------------------------------- discovery
+_STOPWORDS = {"the", "and", "for", "with", "meme", "memes", "gif", "gifs", "karo",
+              "ki", "ka", "ke", "hai", "a", "an", "of", "to", "in", "on"}
+_GIF_HOSTS = ("giphy.com", "tenor.com", "gfycat.com", "imgflip.com", "tenor.co")
+
+
+def _tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", text.lower())
+            if len(t) >= 3 and t not in _STOPWORDS}
+
+
+def _looks_like_gif(url: str) -> bool:
+    low = url.lower()
+    host = urlparse(low).netloc
+    return ".gif" in low or any(h in host for h in _GIF_HOSTS)
+
+
+def _relevance_key(cand: dict, qtokens: set[str]):
+    """Sort key: lexical overlap with the query first, GIF-looking URLs second."""
+    haystack = " ".join([cand.get("title", ""), cand["image"], cand.get("page") or ""])
+    overlap = len(qtokens & _tokens(haystack))
+    return (-overlap, not _looks_like_gif(cand["image"]))
+
+
 def search_candidates(query: str, n: int = MAX_CANDIDATES) -> list[dict]:
-    """Free candidate fetch from DuckDuckGo image search (animated GIFs first)."""
+    """Free candidate fetch. Pull a bigger pool, then keep the n most relevant.
+
+    Datacenter IPs (Render) often get weaker or generic DuckDuckGo results, so
+    we (1) pin the backend instead of letting ddgs pick one (the Bing backend
+    ignores the GIF filter), (2) fall back to Bing only if DuckDuckGo comes up
+    short, and (3) pre-sort by query-word overlap + GIF-looking URLs so junk
+    never reaches the embedding step.
+    """
+    pool_size = n * CANDIDATE_POOL
     seen: set[str] = set()
-    out: list[dict] = []
-    for q, kind in ((f"{query} gif", "gif"), (f"{query} meme gif", None)):
+    pool: list[dict] = []
+    attempts = [
+        ("duckduckgo", f"{query} gif", {"type_image": "gif"}),
+        ("duckduckgo", f"{query} meme gif", {}),
+        ("bing", f"{query} animated gif", {}),
+    ]
+    for backend, q, extra in attempts:
+        if len(pool) >= pool_size:
+            break
         try:
             rows = DDGS(timeout=10).images(
-                q, max_results=n * 2, type_image=kind, safesearch="moderate")
-        except Exception as exc:  # rate limits, network errors, parser changes
-            log.warning("DuckDuckGo search failed: %s", exc)
-            rows = []
+                q, region=DDG_REGION, safesearch="moderate",
+                max_results=pool_size, backend=backend, **extra)
+        except Exception as exc:  # rate limits, blocks, parser changes
+            log.warning("%s image search failed for %r: %s", backend, q, exc)
+            continue
+        added = 0
         for row in rows or []:
             url = row.get("image")
             if url and url not in seen:
                 seen.add(url)
-                out.append({"image": url, "page": row.get("url"),
-                            "title": row.get("title") or ""})
-        if len(out) >= n:
-            break
-    return out[:n]
+                pool.append({"image": url, "page": row.get("url"),
+                             "title": row.get("title") or ""})
+                added += 1
+        log.info("%s returned %d new candidates for %r", backend, added, q)
+
+    qtokens = _tokens(query)
+    pool.sort(key=lambda c: _relevance_key(c, qtokens))  # stable: keeps source order on ties
+    return pool[:n]
 
 
 def process_candidate(client: genai.Client, cand: dict) -> dict | None:
@@ -358,6 +411,9 @@ def discover_and_rank(client, qvec: np.ndarray, search_query: str, progress=None
 
     status = (f"🌐 Live search: {len(cands)} candidates from DuckDuckGo → "
               f"{len(results)} usable, ranked by gemini-embedding-2.")
+    if ranked[0]["score"] < MIN_CONFIDENCE:
+        status += (" ⚠️ Low confidence: the web search probably returned off-topic "
+                   "images. Try rephrasing, or search again in a minute.")
     if rate_limited:
         status += " ⚠️ Gemini quota ran out partway, so some candidates were skipped."
     if timed_out:
@@ -393,7 +449,8 @@ def text_search(query: str, api_key: str | None = None, progress=None):
     except RateLimited:
         raise FinderError("Gemini quota is busy (HTTP 429). Wait a few seconds, "
                           "try a preset chip, or paste your own API key.", 429)
-    db.set_results(key, matches)
+    if matches and matches[0]["score"] >= MIN_CONFIDENCE:
+        db.set_results(key, matches)  # don't pin junk results for 6 hours
     return matches, status
 
 
@@ -441,7 +498,28 @@ def _filename(url: str) -> str:
     return name if len(name) <= 40 else name[:37] + "..."
 
 
+def _bundled_path(match: dict) -> Path | None:
+    """Preset images committed under cache/ (made by warm_cache.py)."""
+    rel = match.get("local")
+    if not rel:
+        return None
+    root = (BASE_DIR / "cache").resolve()
+    src = (root / rel).resolve()
+    if root not in src.parents or not src.is_file():
+        return None
+    dest = CACHE_DIR / src.name
+    try:
+        if not dest.exists():
+            shutil.copyfile(src, dest)  # fresh mtime so pruning doesn't evict it first
+    except OSError:
+        return None
+    return dest
+
+
 def _ensure_local(match: dict) -> Path | None:
+    bundled = _bundled_path(match)
+    if bundled:
+        return bundled
     path = _local_path(match["url"])
     if path:
         return path
